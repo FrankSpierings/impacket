@@ -37,10 +37,10 @@ TEST_CASE = False # Only set to True when running Test Cases
 
 
 def computeResponse(flags, serverChallenge, clientChallenge, serverName, domain, user, password, lmhash='', nthash='',
-                    use_ntlmv2=USE_NTLMv2):
+                    use_ntlmv2=USE_NTLMv2, channel_binding_value=''):
     if use_ntlmv2:
         return computeResponseNTLMv2(flags, serverChallenge, clientChallenge, serverName, domain, user, password,
-                                     lmhash, nthash, use_ntlmv2=use_ntlmv2)
+                                     lmhash, nthash, use_ntlmv2=use_ntlmv2, channel_binding_value=channel_binding_value)
     else:
         return computeResponseNTLMv1(flags, serverChallenge, clientChallenge, serverName, domain, user, password,
                                      lmhash, nthash, use_ntlmv2=use_ntlmv2)
@@ -325,6 +325,7 @@ class NTLMAuthNegotiate(Structure):
             self['host_offset']=32 + version_len
         if (self['flags'] & NTLMSSP_NEGOTIATE_OEM_DOMAIN_SUPPLIED) == NTLMSSP_NEGOTIATE_OEM_DOMAIN_SUPPLIED:
             self['domain_offset']=32+len(self['host_name']) + version_len
+        LOG.debug(f'Debug packet info:\n{self}')
         return Structure.getData(self)
 
     def fromString(self,data):
@@ -342,6 +343,34 @@ class NTLMAuthNegotiate(Structure):
             self['os_version'] = VERSION(data[32:])
         else:
             self['os_version'] = ''
+    
+    def __str__(self):
+        output = ''
+        for key in self.fields:
+            if key == 'flags':
+                output += f'{key}: {NegotiateFlags(self.fields[key])}'
+            elif key in ['challenge', 'reserved']:
+                output += f'{key}: {self.fields[key].hex()}'
+            elif key in ['host_name', 'domain_name']:
+                try:
+                    output += f'{key}: {self.fields[key].decode("utf-16-le")}'
+                except:
+                    output += f'{key}: {self.fields[key]}'
+            elif key in ['TargetInfoFields']:
+                suboutput = []
+                av_pairs = AV_PAIRS(self.fields[key])
+                for nr in av_pairs.fields:
+                    if NTLMSSP_AV(nr) in [NTLMSSP_AV.HOSTNAME, NTLMSSP_AV.DOMAINNAME, NTLMSSP_AV.DNS_HOSTNAME, NTLMSSP_AV.DNS_DOMAINNAME, NTLMSSP_AV.DNS_TREENAME, NTLMSSP_AV.TARGET_NAME]:
+                        suboutput.append(f'{NTLMSSP_AV(nr)}: {av_pairs.fields[nr][1].decode("utf-16-le")}')
+                    else:
+                        suboutput.append(f'{NTLMSSP_AV(nr)}: {av_pairs.fields[nr][1]}')
+                    suboutput.append('\n')
+                output += f'{key}:\n'
+                output += '\t\t'.join(suboutput)
+            else:
+                output += f'{key}: {self.fields[key]}'            
+            output += '\n'
+        return output
 
 class NTLMAuthChallenge(Structure):
 
@@ -372,7 +401,7 @@ class NTLMAuthChallenge(Structure):
     def getData(self):
         if self['TargetInfoFields'] is not None and type(self['TargetInfoFields']) is not bytes:
             raw_av_fields = self['TargetInfoFields'].getData()
-            self['TargetInfoFields'] = raw_av_fields
+            self['TargetInfoFields'] = raw_av_fields        
         return Structure.getData(self)
 
     def fromString(self,data):
@@ -380,6 +409,31 @@ class NTLMAuthChallenge(Structure):
         self['domain_name'] = data[self['domain_offset']:][:self['domain_len']]
         self['TargetInfoFields'] = data[self['TargetInfoFields_offset']:][:self['TargetInfoFields_len']]
         return self
+    
+    def __str__(self):
+        output = ''
+        for key in self.fields:
+            if key == 'flags':
+                output += f'{key}: {NegotiateFlags(self.fields[key])}'
+            elif key in ['challenge', 'reserved']:
+                output += f'{key}: {self.fields[key].hex()}'
+            elif key in ['host_name', 'domain_name']:
+                output += f'{key}: {self.fields[key].decode("utf-16-le")}'
+            elif key in ['TargetInfoFields']:
+                suboutput = []
+                av_pairs = AV_PAIRS(self.fields[key])
+                for nr in av_pairs.fields:
+                    if NTLMSSP_AV(nr) in [NTLMSSP_AV.HOSTNAME, NTLMSSP_AV.DOMAINNAME, NTLMSSP_AV.DNS_HOSTNAME, NTLMSSP_AV.DNS_DOMAINNAME, NTLMSSP_AV.DNS_TREENAME, NTLMSSP_AV.TARGET_NAME]:
+                        suboutput.append(f'{NTLMSSP_AV(nr)}: {av_pairs.fields[nr][1].decode("utf-16-le")}')
+                    else:
+                        suboutput.append(f'{NTLMSSP_AV(nr)}: {av_pairs.fields[nr][1]}')
+                    suboutput.append('\n')
+                output += f'{key}:\n'
+                output += '\t\t'.join(suboutput)
+            else:
+                output += f'{key}: {self.fields[key]}'            
+            output += '\n'
+        return output
         
 class NTLMAuthChallengeResponse(Structure):
 
@@ -472,6 +526,7 @@ class NTLMAuthChallengeResponse(Structure):
         self['lanman_offset']=self['host_offset']+len(self['host_name'])
         self['ntlm_offset']=self['lanman_offset']+len(self['lanman'])
         self['session_key_offset']=self['ntlm_offset']+len(self['ntlm'])
+        LOG.debug(f'Debug packet info:\n{self}')
         return Structure.getData(self)
 
     def fromString(self,data):
@@ -499,6 +554,31 @@ class NTLMAuthChallengeResponse(Structure):
         lanman_offset = self['lanman_offset'] 
         lanman_end    = self['lanman_len'] + lanman_offset
         self['lanman'] = data[ lanman_offset : lanman_end]
+
+    def __str__(self):
+        output = ''
+        for key in self.fields:
+            if key == 'flags':
+                output += f'{key}: {NegotiateFlags(self.fields[key])}'
+            elif key in ['challenge', 'reserved']:
+                output += f'{key}: {self.fields[key].hex()}'
+            elif key in ['host_name', 'domain_name']:
+                output += f'{key}: {self.fields[key].decode("utf-16-le")}'
+            elif key in ['TargetInfoFields']:
+                suboutput = []
+                av_pairs = AV_PAIRS(self.fields[key])
+                for nr in av_pairs.fields:
+                    if NTLMSSP_AV(nr) in [NTLMSSP_AV.HOSTNAME, NTLMSSP_AV.DOMAINNAME, NTLMSSP_AV.DNS_HOSTNAME, NTLMSSP_AV.DNS_DOMAINNAME, NTLMSSP_AV.DNS_TREENAME, NTLMSSP_AV.TARGET_NAME]:
+                        suboutput.append(f'{NTLMSSP_AV(nr)}: {av_pairs.fields[nr][1].decode("utf-16-le")}')
+                    else:
+                        suboutput.append(f'{NTLMSSP_AV(nr)}: {av_pairs.fields[nr][1]}')
+                    suboutput.append('\n')
+                output += f'{key}:\n'
+                output += '\t\t'.join(suboutput)
+            else:
+                output += f'{key}: {self.fields[key]}'            
+            output += '\n'
+        return output
 
 class ImpacketStructure(Structure):
     def set_parent(self, other):
@@ -594,7 +674,7 @@ def getNTLMSSPType1(workstation='', domain='', signingRequired = False, use_ntlm
 
     return auth
 
-def getNTLMSSPType3(type1, type2, user, password, domain, lmhash = '', nthash = '', use_ntlmv2 = USE_NTLMv2):
+def getNTLMSSPType3(type1, type2, user, password, domain, lmhash = '', nthash = '', use_ntlmv2 = USE_NTLMv2, channel_binding_value = ''):
 
     # Safety check in case somebody sent password = None.. That's not allowed. Setting it to '' and hope for the best.
     if password is None:
@@ -633,7 +713,7 @@ def getNTLMSSPType3(type1, type2, user, password, domain, lmhash = '', nthash = 
 
     ntResponse, lmResponse, sessionBaseKey = computeResponse(ntlmChallenge['flags'], ntlmChallenge['challenge'],
                                                              clientChallenge, serverName, domain, user, password,
-                                                             lmhash, nthash, use_ntlmv2)
+                                                             lmhash, nthash, use_ntlmv2, channel_binding_value = channel_binding_value)
 
     # Let's check the return flags
     if (ntlmChallenge['flags'] & NTLMSSP_NEGOTIATE_EXTENDED_SESSIONSECURITY) == 0:
@@ -898,7 +978,7 @@ def LMOWFv2( user, password, domain, lmhash = ''):
 
 
 def computeResponseNTLMv2(flags, serverChallenge, clientChallenge, serverName, domain, user, password, lmhash='',
-                          nthash='', use_ntlmv2=USE_NTLMv2):
+                          nthash='', use_ntlmv2=USE_NTLMv2, channel_binding_value=''):
 
     responseServerVersion = b'\x01'
     hiResponseServerVersion = b'\x01'
@@ -919,9 +999,27 @@ def computeResponseNTLMv2(flags, serverChallenge, clientChallenge, serverName, d
         serverName = av_pairs.getData()
     else:
         aTime = b'\x00'*8
+    
+    if channel_binding_value is None:
+        channel_binding_value = b''
+    elif isinstance(channel_binding_value, str):
+        channel_binding_value = channel_binding_value.encode()
+    if len(channel_binding_value) > 0:
+        av_pairs[NTLMSSP_AV_CHANNEL_BINDINGS] = channel_binding_value
+    
+    # The following variable length AvPairs must be terminated like so
+    av_pairs[NTLMSSP_AV_EOL] = b''
 
-    temp = responseServerVersion + hiResponseServerVersion + b'\x00' * 6 + aTime + clientChallenge + b'\x00' * 4 + \
-           serverName + b'\x00' * 4
+    # Format according to:
+    # https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-nlmp/aee311d6-21a7-4470-92a5-c4ecb022a87b
+    temp = responseServerVersion # RespType 1 byte
+    temp += hiResponseServerVersion # HiRespType 1 byte
+    temp += b'\x00' * 2 # Reserved1 2 bytes
+    temp += b'\x00' * 4 # Reserved2 4 bytes
+    temp += aTime # TimeStamp 8 bytes
+    temp += clientChallenge # ChallengeFromClient 8 bytes
+    temp += b'\x00' * 4 # Reserved 4 bytes
+    temp += av_pairs.getData() # AvPairs variable
 
     ntProofStr = hmac_md5(responseKeyNT, serverChallenge + temp)
 
@@ -978,3 +1076,53 @@ class NTLM_HTTP_AuthChallengeResponse(NTLM_HTTP, NTLMAuthChallengeResponse):
 
     def __init__(self):
         NTLMAuthChallengeResponse.__init__(self)
+
+
+from enum import Flag, Enum
+class NegotiateFlags(Flag):
+    NTLMSSP_NEGOTIATE_56                       = 0x80000000
+    NTLMSSP_NEGOTIATE_KEY_EXCH                 = 0x40000000
+    NTLMSSP_NEGOTIATE_128                      = 0x20000000
+    NTLMSSP_RESERVED_1                         = 0x10000000
+    NTLMSSP_RESERVED_2                         = 0x08000000
+    NTLMSSP_RESERVED_3                         = 0x04000000
+    NTLMSSP_NEGOTIATE_VERSION                  = 0x02000000
+    NTLMSSP_RESERVED_4                         = 0x01000000
+    NTLMSSP_NEGOTIATE_TARGET_INFO              = 0x00800000
+    NTLMSSP_REQUEST_NON_NT_SESSION_KEY         = 0x00400000
+    NTLMSSP_RESERVED_5                         = 0x00200000
+    NTLMSSP_NEGOTIATE_IDENTIFY                 = 0x00100000
+    NTLMSSP_NEGOTIATE_EXTENDED_SESSIONSECURITY = 0x00080000
+    NTLMSSP_NEGOTIATE_NTLM2                    = 0x00080000
+    NTLMSSP_TARGET_TYPE_SHARE                  = 0x00040000
+    NTLMSSP_TARGET_TYPE_SERVER                 = 0x00020000
+    NTLMSSP_TARGET_TYPE_DOMAIN                 = 0x00010000
+    NTLMSSP_NEGOTIATE_ALWAYS_SIGN              = 0x00008000
+    NTLMSSP_RESERVED_6                         = 0x00004000
+    NTLMSSP_NEGOTIATE_OEM_WORKSTATION_SUPPLIED = 0x00002000
+    NTLMSSP_NEGOTIATE_OEM_DOMAIN_SUPPLIED      = 0x00001000
+    NTLMSSP_NEGOTIATE_ANONYMOUS                = 0x00000800
+    NTLMSSP_NEGOTIATE_NT_ONLY                  = 0x00000400
+    NTLMSSP_NEGOTIATE_NTLM                     = 0x00000200
+    NTLMSSP_RESERVED_8                         = 0x00000100
+    NTLMSSP_NEGOTIATE_LM_KEY                   = 0x00000080
+    NTLMSSP_NEGOTIATE_DATAGRAM                 = 0x00000040
+    NTLMSSP_NEGOTIATE_SEAL                     = 0x00000020
+    NTLMSSP_NEGOTIATE_SIGN                     = 0x00000010
+    NTLMSSP_RESERVED_9                         = 0x00000008
+    NTLMSSP_REQUEST_TARGET                     = 0x00000004
+    NTLM_NEGOTIATE_OEM                         = 0x00000002
+    NTLMSSP_NEGOTIATE_UNICODE                  = 0x00000001
+
+class NTLMSSP_AV(Enum):
+    EOL              = 0x00
+    HOSTNAME         = 0x01
+    DOMAINNAME       = 0x02
+    DNS_HOSTNAME     = 0x03
+    DNS_DOMAINNAME   = 0x04
+    DNS_TREENAME     = 0x05
+    FLAGS            = 0x06
+    TIME             = 0x07
+    RESTRICTIONS     = 0x08
+    TARGET_NAME      = 0x09
+    CHANNEL_BINDINGS = 0x0a
